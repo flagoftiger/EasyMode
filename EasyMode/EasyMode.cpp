@@ -5,6 +5,8 @@
 const int KEY_SIZE = 256;
 bool KEY_FILTER[KEY_SIZE] = { false, };
 const std::string APP_NAME("World of Warcraft");
+const int MAX_CLIENT_COUNT = 5;
+const int WINDOWS_HEADER_SIZE = 22;
 
 HWND g_hWnd = NULL;
 HBRUSH g_pausedBrush = NULL;
@@ -12,13 +14,19 @@ HBRUSH g_resumedBrush = NULL;
 HHOOK g_keyboardHook = NULL;
 bool g_paused = true;
 
-std::vector<HWND> g_hAppWindows;
+HWND g_hWindows[MAX_CLIENT_COUNT] = { 0, };
+HDC g_hDC = NULL;
+int g_clientCount = 0;
 
 BOOL CALLBACK EnumWindowsProc(
 	__in  HWND hWnd,
 	__in  LPARAM lParam
 )
 {
+	// Skip child windows
+	if (GetTopWindow(hWnd))
+		return TRUE;
+
 	int length = GetWindowTextLengthA(hWnd);
 	if (APP_NAME.length() == length)
 	{
@@ -28,7 +36,14 @@ BOOL CALLBACK EnumWindowsProc(
 		GetWindowTextA(hWnd, buffer, length + 1);
 		if (strcmp(APP_NAME.c_str(), buffer) == 0)
 		{
-			g_hAppWindows.push_back(hWnd);
+			if (g_clientCount == MAX_CLIENT_COUNT)
+			{
+				MessageBox(NULL, L"Too many clients!", L"Error", 0);
+				return TRUE;
+			}
+
+			g_hWindows[g_clientCount] = hWnd;
+			g_clientCount++;
 		}
 	}
 	return TRUE;
@@ -37,25 +52,62 @@ BOOL CALLBACK EnumWindowsProc(
 int PrepareWindows()
 {
 	EnumWindows(EnumWindowsProc, NULL);
+	return g_clientCount;
+}
 
-	return (int)g_hAppWindows.size();
+char str[256] = { 0, };
+
+DWORD GetKeyFromWindow(HWND hWnd, DWORD vkCode, WPARAM keyState)
+{
+	RECT rect = { 0, };
+	GetWindowRect(hWnd, &rect);
+	int x = (rect.right - rect.left) / 2 + rect.left;
+	int y = (rect.bottom - rect.top + WINDOWS_HEADER_SIZE) / 2 + rect.top;
+	COLORREF color = GetPixel(g_hDC, x, y);
+
+	sprintf_s(str, "x%d y%d - R%#X G%#X B%#X key%#X state=%IX hWnd%IX\r\n", 
+		x, y, GetRValue(color), GetGValue(color), GetBValue(color), 
+		vkCode, keyState , hWnd);
+	OutputDebugStringA(str);
+
+	return vkCode;
 }
 
 void BroadcastKey(WPARAM keyState, DWORD vkCode)
 {
 	HWND hActiveWindow = GetForegroundWindow();
-	auto it = std::find(g_hAppWindows.begin(), g_hAppWindows.end(), hActiveWindow);
-	if (it != g_hAppWindows.end())
+	HWND topWindow = GetTopWindow(hActiveWindow);
+	if (topWindow)
 	{
-		for (it = g_hAppWindows.begin(); it != g_hAppWindows.end(); ++it)
+		hActiveWindow = topWindow;
+		sprintf_s(str, "TopWindow%IX \r\n", hActiveWindow);
+		OutputDebugStringA(str);
+	}
+
+	bool needToBroadcast = false;
+	for (int i = 0; i < g_clientCount; i++)
+	{
+		if (g_hWindows[i] == hActiveWindow)
+		{
+			needToBroadcast = true;
+			break;
+		}
+	}
+	if (!needToBroadcast)
+		return;
+	for (int i = 0; i < g_clientCount; i++)
+	{
+		if (g_hWindows[i] == hActiveWindow)
 		{
 			// Do not post message to the active window since we will call CallNextHookEx
-			if (*it == hActiveWindow)
-			{
-				continue;
-			}
-			PostMessage(*it, (UINT)keyState, vkCode, 0);
+			continue;
 		}
+		DWORD key = vkCode;
+		if (keyState == WM_KEYDOWN)
+		{
+			DWORD key = GetKeyFromWindow(g_hWindows[i], vkCode, keyState);
+		}
+		PostMessage(g_hWindows[i], (UINT)keyState, key, 0);
 	}
 }
 
@@ -77,9 +129,35 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
 					{
 						if (PrepareWindows() < 2)
 						{
-							MessageBox(NULL, L"Need at least two instances!", L"Error", 0);
+							MessageBox(NULL, L"Need at least two clients!", L"Error", 0);
 							g_paused = true;
+							g_clientCount = 0;
 						}
+						g_hDC = GetDC(NULL);
+						for (int i = 0; i < g_clientCount; i++)
+						{
+							RECT r;
+							GetWindowRect(g_hWindows[i], &r);
+
+							HWND topWindow = GetTopWindow(g_hWindows[i]);
+							char topWindowName[256] = { 0, };
+							if (topWindow)
+								GetWindowTextA(topWindow, topWindowName, 256);
+							sprintf_s(str, "Client[%d] hWnd=%IX l=%d r=%d t=%d b=%d top=%IX name=%s\r\n",
+								i, g_hWindows[i],
+								r.left, r.right, r.top, r.bottom,
+								GetTopWindow(g_hWindows[i]), topWindowName);
+							OutputDebugStringA(str);
+						}
+					}
+					else
+					{
+						if (g_hDC)
+						{
+							ReleaseDC(NULL, g_hDC);
+							g_hDC = NULL;
+						}
+						g_clientCount = 0;
 					}
 					// Change windows color
 					InvalidateRect(g_hWnd, NULL, TRUE);
@@ -117,6 +195,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_DESTROY:
 		PostQuitMessage(0);
+		if (g_hDC)
+		{
+			ReleaseDC(NULL, g_hDC);
+			g_hDC = NULL;
+		}
 		break;
 	default:
 		return DefWindowProc(hWnd, message, wParam, lParam);
@@ -140,18 +223,18 @@ int Initialize(HINSTANCE hInstance, int nCmdShow)
 	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	wcex.lpszMenuName = NULL;
-	wcex.lpszClassName = L"EasyLifeWindow";
+	wcex.lpszClassName = L"EasyModeWindow";
 	wcex.hIconSm = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_APPLICATION));
 
 	if (!RegisterClassEx(&wcex))
 	{
-		MessageBox(NULL, L"Call to RegisterClassEx failed!", L"EasyLife", NULL);
+		MessageBox(NULL, L"Call to RegisterClassEx failed!", L"EasyMode", NULL);
 		return 1;
 	}
 
 	g_hWnd = CreateWindow(
 		wcex.lpszClassName,
-		L"EasyLife",
+		L"EasyMode",
 		WS_SYSMENU,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		0, 64,
@@ -163,7 +246,7 @@ int Initialize(HINSTANCE hInstance, int nCmdShow)
 
 	if (!g_hWnd)
 	{
-		MessageBox(NULL, L"Call to CreateWindow failed!", L"EasyLife", NULL);
+		MessageBox(NULL, L"Call to CreateWindow failed!", L"EasyMode", NULL);
 		return 1;
 	}
 
