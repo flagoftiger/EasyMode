@@ -20,6 +20,9 @@
 			<OnEvent>
 				OnEvent(self, event, ...)
 			</OnEvent>
+			<OnUpdate>
+				OnUpdate(self, elapsed)
+			</OnUpdate>
 		</Scripts>
 	</Frame>
 </Ui>

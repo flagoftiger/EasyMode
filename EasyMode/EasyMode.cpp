@@ -2,6 +2,7 @@
 #include <vector>
 #include <string>
 
+const wchar_t WINDOWS_NAME[] = L"EasyMode - 0.1.0";
 const int KEY_SIZE = 256;
 bool KEY_FILTER[KEY_SIZE] = { false, };
 const std::string APP_NAME("World of Warcraft");
@@ -102,11 +103,12 @@ void BroadcastKey(WPARAM keyState, DWORD vkCode)
 			// Do not post message to the active window since we will call CallNextHookEx
 			continue;
 		}
+
 		DWORD key = vkCode;
-		if (keyState == WM_KEYDOWN)
-		{
-			DWORD key = GetKeyFromWindow(g_hWindows[i], vkCode, keyState);
-		}
+		//if (keyState == WM_KEYDOWN)
+		//{
+		//	DWORD key = GetKeyFromWindow(g_hWindows[i], vkCode, keyState);
+		//}
 		PostMessage(g_hWindows[i], (UINT)keyState, key, 0);
 	}
 }
@@ -234,10 +236,10 @@ int Initialize(HINSTANCE hInstance, int nCmdShow)
 
 	g_hWnd = CreateWindow(
 		wcex.lpszClassName,
-		L"EasyMode",
+		WINDOWS_NAME,
 		WS_SYSMENU,
 		CW_USEDEFAULT, CW_USEDEFAULT,
-		0, 64,
+		200, 64,
 		NULL,
 		NULL,
 		hInstance,

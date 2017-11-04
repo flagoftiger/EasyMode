@@ -8,21 +8,37 @@
 local g_class = "None";
 local g_spec = "None";
 
-local g_moveFunc = "None";
+local g_onUpdateFunc = nil;
+local g_onEventFunc = nil;
+local g_initizlieFunc = nil;
 
-function Log(message)
-	DEFAULT_CHAT_FRAME:AddMessage("D " .. (message or ""));
+local g_currentMove = 0;
+
+-- Table <SpellName, <Key, SpellID> >
+local g_spells = {};
+
+
+
+--
+-- Log functions
+--
+-- message:string
+function LogDebug(message)
+	DEFAULT_CHAT_FRAME:AddMessage("EasyMode: " .. (message or ""), 0.6, 0.6, 0.6);
 end
 
-function SetNextKey()
-	IndicatorTexture:SetVertexColor(0.0, 0.0, 0.0, 1.0);
+function LogInfo(message)
+	DEFAULT_CHAT_FRAME:AddMessage("EasyMode: " .. (message or ""));
+end
+
+function LogError(message)
+	DEFAULT_CHAT_FRAME:AddMessage("EasyMode: " .. (message or "") , 1.0, 0.5, 0.5);
 end
 
 --
--- AddOn entry point
+-- UI hander functions
 --
 function OnLoad(self)
-	Log("OnLoad");
 	self:RegisterEvent("PLAYER_LOGIN")
 end
 
@@ -34,37 +50,65 @@ function OnEvent(self, event, ...)
 		self:RegisterEvent("AUTOFOLLOW_BEGIN")
 		self:RegisterEvent("AUTOFOLLOW_END")
 		self:RegisterEvent("PLAYER_TALENT_UPDATE")
-		Initialize();
+		Initialize(self);
 	elseif event == "UPDATE_BINDINGS" then
 		-- Create spell table again		
 	elseif event == "AUTOFOLLOW_BEGIN" then
 		IndicatorTexture:SetVertexColor(tonumber("0x57") / tonumber("0xFF"), 0.0, 1.0, 1.0);
 
 
-		SendChatMessage("following", "PARTY", nil, nil)
+--		SendChatMessage("following", "PARTY", nil, nil)
 	elseif event == "AUTOFOLLOW_END" then
 		IndicatorTexture:SetVertexColor(tonumber("0x52") / tonumber("0xFF"), 1.0, 0.0, 1.0);
 
-		SendChatMessage("wait for me plz!!!", "PARTY", nil, nil)
+--		SendChatMessage("wait for me plz!!!", "PARTY", nil, nil)
 	elseif event == "PLAYER_TALENT_UPDATE" then
-		SetSpec();
-		g_moveFunc = g_class .. "_" .. g_spec;
-		Log("PLAYER_TALENT_UPDATE: " .. g_moveFunc);
+		InitializeSpec();
+	end
+
+	-- Class & Spec specific OnEvent function
+	if g_onEventFunc then
+		_G[g_onEventFunc](self, event);
+	end 
+end
+
+function OnUpdate(self, elapsed)
+	if g_onUpdateFunc then
+		_G[g_onUpdateFunc](elapsed);
 	end
 end
 
-function Initialize()
-	Log("EasyMode loaded!");
+--
+-- Initialization functions
+--
+
+function Initialize(self)
+	LogInfo("EasyMode Enabled!");
 	SetClass();
-	SetSpec();
-
-	g_moveFunc = g_class .. "_" .. g_spec;
-
-	Log(g_moveFunc);
-	_G[g_moveFunc]();
+	InitializeSpec(self);
 
 	--CreateSpellTable();
-	--GetNextMove();
+end
+
+function InitializeSpec(self)
+	SetSpec();
+	g_onUpdateFunc = g_class .. "_" .. g_spec .. "_OnUpdate";
+	if _G[g_onUpdateFunc] == nil then
+		g_onUpdateFunc = nil;
+	end
+	g_onEventFunc = g_class .. "_" .. g_spec .. "_OnEvent";
+	if _G[g_onEventFunc] == nil then
+		g_onEventFunc = nil;
+	end
+	g_onInitializeFunc = g_class .. "_" .. g_spec .. "_Initialize";
+	if _G[g_onInitializeFunc] then
+		_G[g_onInitializeFunc](self);
+	else
+		g_onInitializeFunc = nil;
+	end
+	LogDebug("OnUpdate: " .. g_onUpdateFunc);
+	LogDebug("OnEvent: " .. g_onEventFunc);
+	LogDebug("Initialize: " .. g_onInitializeFunc);
 end
 
 function SetClass()
@@ -78,17 +122,102 @@ end
 function CreateSpellTable()
 end
 
-function GetNextMove()
-	local controllerName = "GetNextMove_" .. g_class .. "_" .. g_spec;
-	local key, spell = _G[controllerName]();
+--
+-- Shared util functions
+--
+
+-- nextMove:byte
+function SetNextMove(nextMove)
+	if g_currentMove ~= nextMove then
+		IndicatorTexture:SetVertexColor(nextMove / 255, 0.0, 0.0);
+		g_currentMove = nextMove;
+	end
 end
 
-function GetNextMove_SHAMAN_Restoration()
-	Log("GetNextMove_SHAMAN_Restoration");
-	return nil, nil;
+-- return: 0.0~1.0
+function GetPlayerPowerPercentage()
+	return UnityPower("PLAYER") / UnityPowerMax("PLAYER");
 end
-function WARLOCK_Demonology()
-	Log("WARLOCK_Demonology run");
+
+-- return: 0.0~1.0
+function GetPlayerHealthPercentage()
+	return UnityHealth("PLAYER") / UnityHealthMax("PLAYER");
+end
+
+-- return:bool
+function IsSpellReady(spellId)
+	return GetSpellCooldown(spellId) == 0;
+end
+
+-- return:bool
+function IsChannelling()
+	a, b = UnitChannelInfo("PLAYER");
+	return a ~= nil;
+end
+
+--
+-- WARLOCK
+--
+-- Affliction
+-- Demonology
+
+--[[
+"Shadow Bolt"
+"Call Dreadstalkers"
+"Hand of Gul'dan"
+"Summon Doomguard"
+"Summon Infernal"
+"Grimoire: Felguard"
+"Demonic Empowerment"
+"Command Demon"
+"Felstorm"
+"Demonwrath"
+"Thal'kiel's Consumption"
+"Life Tap"
+
+http://wowwiki.wikia.com/wiki/API_GetBinding
+
+https://www.icy-veins.com/wow/demonology-warlock-pve-dps-rotation-cooldowns-abilities
+
+]]--
+function WARLOCK_Demonology_Initialize(self)
+	self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+end
+
+function WARLOCK_Demonology_OnEvent(self, event)
+	if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+	end
+end
+
+function WARLOCK_Demonology_Spell()
+	g_spells = {
+		["Shadow Bolt"] = {"2"},
+		["Call Dreadstalkers"] = {"T"},
+		["Hand of Gul'dan"] = {"Q"},
+		["Summon Doomguard"] = {"F1"},
+		["Summon Infernal"] = {"F3"},
+		["Grimoire: Felguard"] = {"3"},
+		["Demonic Empowerment"] = {"R"},
+		["Command Demon"] = {""},
+		["Felstorm"] = {},
+		["Demonwrath"] = {"C"},
+		["Thal'kiel's Consumption"] = {"V"},
+		["Life Tap"] = {"CapsLock"},
+	}
+
+	for spellName in pairs(g_spells) do 
+
+	end	
+end
+
+function WARLOCK_Demonology_OnUpdate(elapsed)
+	name, a  = UnitBuff("Dreadstalker", 1);
+	if name then
+		LogDebug(name);
+	end
+
+
+--	LogDebug("WARLOCK_Demonology run");
 --[[
 	-- check casting something or not
 	if casting then
@@ -112,3 +241,5 @@ function WARLOCK_Demonology()
 	--	Call Dreadstalkers
 ]]--
 end
+-- Destruction
+
